@@ -1,16 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '../../../lib/supabaseClient';
 import { FileCheck, Plus, Trash2, Loader2, Calendar } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
-
-const getSupabaseClient = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kkqamahqoynwsokylgzj.supabase.co';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';
-  return createClient(url, key);
-};
 
 interface Course {
   id: string;
@@ -44,7 +38,7 @@ export default function AssignmentsPage() {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const supabase = getSupabaseClient();
+      const supabase = getSupabase();
       const { data: coursesData } = await supabase.from('courses').select('id, title');
       setCourses(coursesData || []);
       if (coursesData && coursesData.length > 0) {
@@ -74,7 +68,7 @@ export default function AssignmentsPage() {
 
     setCreating(true);
     try {
-      const supabase = getSupabaseClient();
+      const supabase = getSupabase();
       const { error } = await supabase.from('assignments').insert([
         {
           title,
@@ -101,7 +95,7 @@ export default function AssignmentsPage() {
     if (!confirm('¿Deseas eliminar este trabajo práctico?')) return;
 
     try {
-      const supabase = getSupabaseClient();
+      const supabase = getSupabase();
       const { error } = await supabase.from('assignments').delete().eq('id', id);
       if (error) throw error;
       await loadInitialData();
