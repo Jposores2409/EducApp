@@ -1,237 +1,210 @@
-import { supabase } from '../../../lib/supabase';
-import { CalendarCheck, Save, PhoneCall, AlertTriangle, UserCheck } from 'lucide-react';
+'use client';
 
-export const dynamic = 'force-dynamic';
+import { useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
+import { CalendarCheck, AlertTriangle, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 
-export default async function AsistenciaPage() {
-  // 1. Obtener todos los perfiles
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, full_name, email, role');
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-  const students = profiles?.filter((p) => p.role === 'student' || p.role === 'alumno') || profiles || [];
+interface StudentAttendance {
+  id: string;
+  full_name: string;
+  email: string;
+  absencesCount: number;
+  statusToday: 'present' | 'absent' | 'late' | 'none';
+}
 
-  // 2. Obtener todo el historial de asistencias para calcular inasistencias totales
-  const { data: attendanceHistory } = await supabase
-    .from('attendance')
-    .select('student_id, status');
+export default function AttendancePage() {
+  const [students, setStudents] = useState<StudentAttendance[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
-  // 3. Contar faltas por cada alumno
-  const absentsMap: Record<string, number> = {};
-  attendanceHistory?.forEach((record) => {
-    if (record.status === 'absent') {
-      absentsMap[record.student_id] = (absentsMap[record.student_id] || 0) + 1;
+  useEffect(() => {
+    fetchAttendanceData();
+  }, [selectedDate]);
+
+  const fetchAttendanceData = async () => {
+    setLoading(true);
+    try {
+      // 1. Obtener lista de alumnos
+      const { data: profiles, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('role', 'student');
+
+      if (profErr) throw profErr;
+
+      // 2. Obtener todas las asistencias registradas
+      const { data: attendanceRecords, error: attErr } = await supabase
+        .from('attendance')
+        .select('*');
+
+      if (attErr) throw attErr;
+
+      // 3. Procesar conteo de ausencias y estado del día seleccionado
+      const processed = (profiles || []).map((student) => {
+        const studentRecords = (attendanceRecords || []).filter(
+          (r) => r.student_id === student.id
+        );
+
+        const totalAbsences = studentRecords.filter(
+          (r) => r.status === 'absent'
+        ).length;
+
+        const recordToday = studentRecords.find((r) => r.date === selectedDate);
+
+        return {
+          id: student.id,
+          full_name: student.full_name || 'Estudiante',
+          email: student.email,
+          absencesCount: totalAbsences,
+          statusToday: recordToday ? recordToday.status : 'none',
+        };
+      });
+
+      setStudents(processed);
+    } catch (err) {
+      console.error('Error cargando asistencia:', err);
+    } finally {
+      setLoading(false);
     }
-  });
+  };
 
-  const todayFormatted = new Date().toLocaleDateString('es-ES', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  const handleMarkAttendance = async (
+    studentId: string,
+    status: 'present' | 'absent' | 'late'
+  ) => {
+    setSavingId(studentId);
+    try {
+      // Upsert directo en Supabase
+      const { error } = await supabase.from('attendance').upsert(
+        {
+          student_id: studentId,
+          date: selectedDate,
+          status: status,
+        },
+        { onConflict: 'student_id,date' }
+      );
 
-  const UMBRAL_FALTAS = 3; // Límite de inasistencias para activar alerta
+      if (error) throw error;
+
+      // Actualizar estado local
+      await fetchAttendanceData();
+    } catch (err) {
+      console.error('Error guardando asistencia:', err);
+      alert('Error guardando asistencia en la base de datos.');
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {/* Encabezado con Fecha */}
-      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <CalendarCheck className="h-7 w-7 text-indigo-600" />
-            Control de Asistencia Diario
+            <CalendarCheck className="h-6 w-6 text-indigo-600" /> Control de Asistencia
           </h1>
-          <p className="text-slate-500 text-sm mt-1 capitalize">
-            Registro para hoy: <span className="font-semibold text-indigo-600">{todayFormatted}</span>
+          <p className="text-xs text-slate-500 mt-1">
+            Registro diario y monitoreo de riesgo por inasistencias acumuladas.
           </p>
         </div>
-
-        <button
-          id="btn-save-attendance"
-          className="inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-xl shadow text-sm cursor-pointer"
-        >
-          <Save className="h-4 w-4" />
-          Guardar Asistencia del Día
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-600">Fecha:</label>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-slate-50"
+          />
+        </div>
       </div>
 
-      <div id="alert-box" className="hidden p-4 rounded-xl text-sm font-medium"></div>
-
-      {/* Resumen de Alertas Críticas */}
-      {students.some((s) => (absentsMap[s.id] || 0) >= UMBRAL_FALTAS) && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <h3 className="text-sm font-bold text-amber-900">Alumnos con riesgo por inasistencias</h3>
-            <p className="text-xs text-amber-700 mt-1">
-              Hay estudiantes que han alcanzado o superado {UMBRAL_FALTAS} inasistencias acumuladas. Requieren seguimiento telefónico prioritario.
-            </p>
+      {loading ? (
+        <div className="flex justify-center items-center py-12 text-slate-500 gap-2">
+          <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
+          <span className="text-sm">Cargando datos de asistencia...</span>
+        </div>
+      ) : students.length === 0 ? (
+        <div className="bg-white p-8 text-center rounded-2xl border border-slate-200 text-slate-500 text-sm">
+          No hay alumnos registrados con el rol "student" en la base de datos.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-semibold">
+                <tr>
+                  <th className="p-4">Estudiante</th>
+                  <th className="p-4 text-center">Inasistencias Acumuladas</th>
+                  <th className="p-4 text-center">Estado de Riesgo</th>
+                  <th className="p-4 text-center">Marcar Asistencia ({selectedDate})</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                {students.map((student) => {
+                  const isHighRisk = student.absencesCount >= 3;
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="p-4">
+                        <div className="font-bold text-slate-900">{student.full_name}</div>
+                        <div className="text-[11px] text-slate-400">{student.email}</div>
+                      </td>
+                      <td className="p-4 text-center font-bold text-sm">
+                        {student.absencesCount}
+                      </td>
+                      <td className="p-4 text-center">
+                        {isHighRisk ? (
+                          <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-600 px-2.5 py-1 rounded-full text-[11px] font-bold border border-rose-200">
+                            <AlertTriangle className="h-3.5 w-3.5" /> Alerta de Riesgo (≥3)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 px-2.5 py-1 rounded-full text-[11px] font-bold border border-emerald-200">
+                            <CheckCircle className="h-3.5 w-3.5" /> Regular
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4 text-center">
+                        {savingId === student.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-indigo-600 mx-auto" />
+                        ) : (
+                          <div className="flex justify-center gap-2">
+                            <button
+                              onClick={() => handleMarkAttendance(student.id, 'present')}
+                              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                                student.statusToday === 'present'
+                                  ? 'bg-emerald-600 text-white shadow'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-emerald-100 hover:text-emerald-700'
+                              }`}
+                            >
+                              Presente
+                            </button>
+                            <button
+                              onClick={() => handleMarkAttendance(student.id, 'absent')}
+                              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                                student.statusToday === 'absent'
+                                  ? 'bg-rose-600 text-white shadow'
+                                  : 'bg-slate-100 text-slate-600 hover:bg-rose-100 hover:text-rose-700'
+                              }`}
+                            >
+                              Ausente
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
-
-      {/* Tabla con Alertas Integradas */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
-              <th className="p-4">Estudiante</th>
-              <th className="p-4 text-center">Faltas Acumuladas</th>
-              <th className="p-4 text-center">Estado de Hoy</th>
-              <th className="p-4 text-center">Acción Recomendada</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 text-sm font-medium text-slate-700">
-            {students.map((student) => {
-              const faltas = absentsMap[student.id] || 0;
-              const requiereLlamada = faltas >= UMBRAL_FALTAS;
-
-              return (
-                <tr
-                  key={student.id}
-                  className={`student-row transition-colors ${
-                    requiereLlamada ? 'bg-rose-50/40 hover:bg-rose-50/70' : 'hover:bg-slate-50/80'
-                  }`}
-                  data-student-id={student.id}
-                  data-status="present"
-                >
-                  {/* Datos Alumno */}
-                  <td className="p-4">
-                    <p className="font-bold text-slate-800">{student.full_name || 'Sin Nombre'}</p>
-                    <p className="text-xs text-slate-400">{student.email}</p>
-                  </td>
-
-                  {/* Faltas Totales */}
-                  <td className="p-4 text-center">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
-                        requiereLlamada
-                          ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {faltas} {faltas === 1 ? 'falta' : 'faltas'}
-                    </span>
-                  </td>
-
-                  {/* Botones Estado */}
-                  <td className="p-4 text-center">
-                    <div className="inline-flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        className="btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white shadow cursor-pointer"
-                        data-target-status="present"
-                      >
-                        Presente
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 cursor-pointer"
-                        data-target-status="late"
-                      >
-                        Tarde
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 cursor-pointer"
-                        data-target-status="absent"
-                      >
-                        Ausente
-                      </button>
-                    </div>
-                  </td>
-
-                  {/* Indicador de Acción Admin */}
-                  <td className="p-4 text-center">
-                    {requiereLlamada ? (
-                      <a
-                        href={`mailto:${student.email}?subject=Aviso de Inasistencias Recurrentes`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-all shadow"
-                      >
-                        <PhoneCall className="h-3.5 w-3.5" />
-                        Llamar / Contactar
-                      </a>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-slate-400">
-                        <UserCheck className="h-3.5 w-3.5 text-emerald-500" /> Regular
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Script Interactivo de Guardado */}
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            document.addEventListener('click', function(e) {
-              if (e.target && e.target.classList.contains('btn-status')) {
-                const button = e.target;
-                const row = button.closest('.student-row');
-                const newStatus = button.getAttribute('data-target-status');
-                
-                row.setAttribute('data-status', newStatus);
-
-                const buttons = row.querySelectorAll('.btn-status');
-                buttons.forEach(btn => {
-                  btn.className = 'btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 cursor-pointer';
-                });
-
-                if (newStatus === 'present') {
-                  button.className = 'btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white shadow cursor-pointer';
-                } else if (newStatus === 'late') {
-                  button.className = 'btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-white shadow cursor-pointer';
-                } else if (newStatus === 'absent') {
-                  button.className = 'btn-status px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white shadow cursor-pointer';
-                }
-              }
-
-              if (e.target && (e.target.id === 'btn-save-attendance' || e.target.closest('#btn-save-attendance'))) {
-                const rows = document.querySelectorAll('.student-row');
-                const attendanceData = [];
-
-                rows.forEach(row => {
-                  attendanceData.push({
-                    student_id: row.getAttribute('data-student-id'),
-                    status: row.getAttribute('data-status')
-                  });
-                });
-
-                const alertBox = document.getElementById('alert-box');
-                alertBox.className = 'p-4 rounded-xl text-sm font-medium bg-indigo-50 text-indigo-800 border border-indigo-200';
-                alertBox.innerText = 'Guardando registro del día en Supabase...';
-                alertBox.classList.remove('hidden');
-
-                fetch('/api/attendance', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ attendanceData })
-                })
-                .then(res => res.json())
-                .then(data => {
-                  if (data.success) {
-                    alertBox.className = 'p-4 rounded-xl text-sm font-medium bg-emerald-50 text-emerald-800 border border-emerald-200';
-                    alertBox.innerText = '¡Asistencia del día guardada e historial actualizado!';
-                    setTimeout(() => window.location.reload(), 1500);
-                  } else {
-                    alertBox.className = 'p-4 rounded-xl text-sm font-medium bg-rose-50 text-rose-800 border border-rose-200';
-                    alertBox.innerText = 'Error al guardar: ' + data.error;
-                  }
-                })
-                .catch(err => {
-                  alertBox.className = 'p-4 rounded-xl text-sm font-medium bg-rose-50 text-rose-800 border border-rose-200';
-                  alertBox.innerText = 'Error de conexión con el servidor.';
-                });
-              }
-            });
-          `,
-        }}
-      />
     </div>
   );
 }
