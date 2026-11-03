@@ -4,12 +4,11 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { FileCheck, Plus, Trash2, Loader2, Calendar } from 'lucide-react';
 
-// Forzar a Next.js a no pre-renderizar esta página estáticamente en el Build
 export const dynamic = 'force-dynamic';
 
 const getSupabaseClient = () => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kkqamahqoynwsokylgzj.supabase.co';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'dummy_key_for_build';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';
   return createClient(url, key);
 };
 
@@ -32,7 +31,6 @@ export default function AssignmentsPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form states
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -47,14 +45,12 @@ export default function AssignmentsPage() {
     setLoading(true);
     try {
       const supabase = getSupabaseClient();
-      // 1. Obtener Cursos
       const { data: coursesData } = await supabase.from('courses').select('id, title');
       setCourses(coursesData || []);
       if (coursesData && coursesData.length > 0) {
         setCourseId(coursesData[0].id);
       }
 
-      // 2. Obtener Trabajos Prácticos
       const { data: assignmentsData, error } = await supabase
         .from('assignments')
         .select('*, courses(title)')
@@ -125,7 +121,6 @@ export default function AssignmentsPage() {
         </p>
       </div>
 
-      {/* Formulario de Creación de TP */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
           <Plus className="h-4 w-4 text-indigo-600" /> Crear Nuevo Trabajo Práctico
@@ -204,7 +199,6 @@ export default function AssignmentsPage() {
         </form>
       </div>
 
-      {/* Listado de Tareas */}
       {loading ? (
         <div className="flex justify-center py-12 text-slate-500 gap-2">
           <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
