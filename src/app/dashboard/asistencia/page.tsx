@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { CalendarCheck, AlertTriangle, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { CalendarCheck, AlertTriangle, CheckCircle, Loader2, RefreshCw } from 'lucide-react';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+// Inicialización segura del cliente Supabase
+const getSupabaseClient = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kkqamahqoynwsokylgzj.supabase.co';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  return createClient(url, key);
+};
 
 interface StudentAttendance {
   id: string;
@@ -23,6 +26,7 @@ export default function AttendancePage() {
   );
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAttendanceData();
@@ -30,24 +34,35 @@ export default function AttendancePage() {
 
   const fetchAttendanceData = async () => {
     setLoading(true);
+    setErrorMessage(null);
+    const supabase = getSupabaseClient();
+
     try {
-      // 1. Obtener lista de alumnos
+      // 1. Obtener todos los perfiles registrados (sin filtrar estrictamente por rol en la BD para evitar vacíos)
       const { data: profiles, error: profErr } = await supabase
         .from('profiles')
-        .select('id, full_name, email')
-        .eq('role', 'student');
+        .select('*');
 
-      if (profErr) throw profErr;
+      if (profErr) {
+        throw new Error(`Error en tabla profiles: ${profErr.message}`);
+      }
 
-      // 2. Obtener todas las asistencias registradas
+      // Filtrar en cliente los perfiles que no sean administradores
+      const studentProfiles = (profiles || []).filter(
+        (p) => !p.role || p.role.toLowerCase() !== 'admin'
+      );
+
+      // 2. Obtener asistencias
       const { data: attendanceRecords, error: attErr } = await supabase
         .from('attendance')
         .select('*');
 
-      if (attErr) throw attErr;
+      if (attErr) {
+        console.warn('Tabla attendance sin datos o no creada aún:', attErr.message);
+      }
 
-      // 3. Procesar conteo de ausencias y estado del día seleccionado
-      const processed = (profiles || []).map((student) => {
+      // 3. Cruzar información
+      const processed: StudentAttendance[] = studentProfiles.map((student) => {
         const studentRecords = (attendanceRecords || []).filter(
           (r) => r.student_id === student.id
         );
@@ -60,16 +75,17 @@ export default function AttendancePage() {
 
         return {
           id: student.id,
-          full_name: student.full_name || 'Estudiante',
-          email: student.email,
+          full_name: student.full_name || student.email || 'Estudiante',
+          email: student.email || '',
           absencesCount: totalAbsences,
           statusToday: recordToday ? recordToday.status : 'none',
         };
       });
 
       setStudents(processed);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error cargando asistencia:', err);
+      setErrorMessage(err.message || 'Error al conectar con Supabase.');
     } finally {
       setLoading(false);
     }
@@ -80,8 +96,8 @@ export default function AttendancePage() {
     status: 'present' | 'absent' | 'late'
   ) => {
     setSavingId(studentId);
+    const supabase = getSupabaseClient();
     try {
-      // Upsert directo en Supabase
       const { error } = await supabase.from('attendance').upsert(
         {
           student_id: studentId,
@@ -92,12 +108,9 @@ export default function AttendancePage() {
       );
 
       if (error) throw error;
-
-      // Actualizar estado local
       await fetchAttendanceData();
-    } catch (err) {
-      console.error('Error guardando asistencia:', err);
-      alert('Error guardando asistencia en la base de datos.');
+    } catch (err: any) {
+      alert('Error al actualizar la asistencia: ' + err.message);
     } finally {
       setSavingId(null);
     }
@@ -111,28 +124,49 @@ export default function AttendancePage() {
             <CalendarCheck className="h-6 w-6 text-indigo-600" /> Control de Asistencia
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Registro diario y monitoreo de riesgo por inasistencias acumuladas.
+            Registro diario y monitoreo automático de inasistencias acumuladas.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold text-slate-600">Fecha:</label>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-slate-50"
-          />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchAttendanceData}
+            className="p-2 border border-slate-300 rounded-xl hover:bg-slate-50 text-slate-600 transition-colors"
+            title="Recargar datos"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-600">Fecha:</label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-slate-50"
+            />
+          </div>
         </div>
       </div>
+
+      {errorMessage && (
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-medium">
+          <strong>Error de conexión:</strong> {errorMessage}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center items-center py-12 text-slate-500 gap-2">
           <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
-          <span className="text-sm">Cargando datos de asistencia...</span>
+          <span className="text-sm">Cargando lista de estudiantes...</span>
         </div>
       ) : students.length === 0 ? (
-        <div className="bg-white p-8 text-center rounded-2xl border border-slate-200 text-slate-500 text-sm">
-          No hay alumnos registrados con el rol "student" en la base de datos.
+        <div className="bg-white p-8 text-center rounded-2xl border border-slate-200 text-slate-500 text-sm space-y-3">
+          <p>No se encontraron perfiles de alumnos registrados en la base de datos.</p>
+          <button
+            onClick={fetchAttendanceData}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-500 transition-colors"
+          >
+            Volver a intentar
+          </button>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -141,9 +175,9 @@ export default function AttendancePage() {
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase tracking-wider font-semibold">
                 <tr>
                   <th className="p-4">Estudiante</th>
-                  <th className="p-4 text-center">Inasistencias Acumuladas</th>
+                  <th className="p-4 text-center">Faltas Acumuladas</th>
                   <th className="p-4 text-center">Estado de Riesgo</th>
-                  <th className="p-4 text-center">Marcar Asistencia ({selectedDate})</th>
+                  <th className="p-4 text-center">Marcar ({selectedDate})</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -161,7 +195,7 @@ export default function AttendancePage() {
                       <td className="p-4 text-center">
                         {isHighRisk ? (
                           <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-600 px-2.5 py-1 rounded-full text-[11px] font-bold border border-rose-200">
-                            <AlertTriangle className="h-3.5 w-3.5" /> Alerta de Riesgo (≥3)
+                            <AlertTriangle className="h-3.5 w-3.5" /> Riesgo (≥3)
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-600 px-2.5 py-1 rounded-full text-[11px] font-bold border border-emerald-200">

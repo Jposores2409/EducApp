@@ -4,15 +4,16 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { BookOpen, Plus, Trash2, Loader2, Folder } from 'lucide-react';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const getSupabaseClient = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kkqamahqoynwsokylgzj.supabase.co';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  return createClient(url, key);
+};
 
 interface Course {
   id: string;
   title: string;
   description: string;
-  created_at?: string;
 }
 
 export default function CoursesPage() {
@@ -28,6 +29,7 @@ export default function CoursesPage() {
 
   const fetchCourses = async () => {
     setLoading(true);
+    const supabase = getSupabaseClient();
     try {
       const { data, error } = await supabase
         .from('courses')
@@ -48,6 +50,7 @@ export default function CoursesPage() {
     if (!title.trim()) return;
 
     setCreating(true);
+    const supabase = getSupabaseClient();
     try {
       const { error } = await supabase.from('courses').insert([
         {
@@ -70,7 +73,7 @@ export default function CoursesPage() {
 
   const handleDeleteCourse = async (id: string) => {
     if (!confirm('¿Deseas eliminar esta materia?')) return;
-
+    const supabase = getSupabaseClient();
     try {
       const { error } = await supabase.from('courses').delete().eq('id', id);
       if (error) throw error;
@@ -93,7 +96,6 @@ export default function CoursesPage() {
         </div>
       </div>
 
-      {/* Formulario de Creación Directa */}
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <h2 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
           <Plus className="h-4 w-4 text-indigo-600" /> Crear Nueva Materia
@@ -125,7 +127,6 @@ export default function CoursesPage() {
         </form>
       </div>
 
-      {/* Lista de Materias */}
       {loading ? (
         <div className="flex justify-center py-12 text-slate-500 gap-2">
           <Loader2 className="h-6 w-6 animate-spin text-indigo-600" />
@@ -133,7 +134,7 @@ export default function CoursesPage() {
         </div>
       ) : courses.length === 0 ? (
         <div className="bg-white p-8 text-center rounded-2xl border border-slate-200 text-slate-500 text-sm">
-          No hay materias registradas aún. ¡Crea la primera utilizando el formulario superior!
+          No hay materias registradas aún. ¡Crea la primera con el formulario superior!
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -150,14 +151,13 @@ export default function CoursesPage() {
                   <button
                     onClick={() => handleDeleteCourse(course.id)}
                     className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                    title="Eliminar materia"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
                 <h3 className="font-bold text-slate-900 text-base">{course.title}</h3>
                 <p className="text-xs text-slate-500 line-clamp-2">
-                  {course.description || 'Sin descripción adicional.'}
+                  {course.description || 'Sin descripción.'}
                 </p>
               </div>
             </div>
